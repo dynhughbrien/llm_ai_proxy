@@ -4,6 +4,16 @@
 
 This is the heart of LiteLLM's cost system — a centralized, community-maintained JSON file covering 100+ LLM providers. It maintains costs for all supported models, including special pricing like prompt caching, reasoning tokens, and provider-specific billing models.
 
+**Every LLM you route traffic through must have a corresponding entry in this database.** This applies whether you are using a hosted provider (OpenAI, Anthropic, Google Vertex, AWS Bedrock, Azure, Cohere, etc.), a self-hosted model via Ollama or vLLM, or a custom fine-tuned deployment. Each entry acts as the single source of truth for that model's identity and economics — without it, LiteLLM cannot calculate cost, enforce budgets, or report spend.
+
+Each entry captures three categories of information:
+
+- **Identity** — the model name, provider (`litellm_provider`), mode (`chat`, `embedding`, `image_generation`, etc.), supported capabilities (function calling, tool choice, vision), and any dated aliases that map to the same model
+- **Context window** — `max_input_tokens` and `max_output_tokens` define the hard limits LiteLLM uses for routing decisions and token budget checks
+- **Cost** — `input_cost_per_token` and `output_cost_per_token` are the baseline per-token USD prices; additional cost fields cover tiered pricing (large contexts, cache reads/writes, reasoning tokens, audio, images, and batch/flex modes)
+
+When you call any LLM through LiteLLM, the framework looks up the model key in this file, reads its cost fields, multiplies them against the actual token counts returned in the response's `usage` object, and records the total spend. If a model is missing from the file — or if you are using a private deployment with different pricing — you register a custom entry to override or supplement the defaults.
+
 Each model entry in the spec looks like this:
 
 ```json
