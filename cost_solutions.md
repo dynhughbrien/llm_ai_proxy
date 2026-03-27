@@ -1,145 +1,209 @@
-# LinkedIn Post Variants: Simple Token Cost Solutions
+# OpenTelemetry Lookup Processor & LiteLLM Token Cost Tracking
 
-## Post 1: Thought Leadership
+## Part 1: OpenTelemetry Lookup Processor for Span Enrichment
 
-🤔 Why are LLM token costs so hard to track?
+### Overview
 
-Most teams use one of two approaches:
-1. Hope your LLM provider's dashboard is accurate (it's not)
-2. Query your database ad-hoc after the fact
+The OpenTelemetry Lookup Processor enriches telemetry data by matching attribute values against external reference sources and adding corresponding metadata. This is the purpose-built component for inserting fields into spans based on lookup table values.
 
-Neither scales.
+### Your Use Case: LLM Model → Token Cost
 
-Here's a better way: **instrument at the edge**.
+The Lookup Processor allows you to automatically enrich spans with business context like token costs based on model names.
 
-✅ LiteLLM automatically calculates token costs after every API call
-✅ OpenTelemetry Lookup Processor validates costs against your pricing tables
-✅ One-line YAML config, zero code changes
+#### Configuration Example
 
-The result? Real-time cost visibility across all models (OpenAI, Anthropic, Bedrock, local inference—doesn't matter).
+```yaml
+processors:
+  lookup:
+    tables:
+      model_costs:
+        "gpt-4": cost_per_token: 0.00003
+        "gpt-3.5-turbo": cost_per_token: 0.0000015
+        "claude-3-opus": cost_per_token: 0.000015
+    lookups:
+      - attribute: gen_ai.model
+        table: model_costs
+        default:
+          cost_per_token: "unknown"
 
-Best part: this works whether you're running 10 requests/day or 10M. No custom integrations. No data loss.
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [lookup, batch]
+      exporters: [otlp]
+```
 
-Token cost tracking shouldn't require a PhD in infrastructure.
+When a span comes through with `gen_ai.model="gpt-4"`, the collector automatically adds `cost_per_token: 0.00003` to the span attributes.
 
-What's your current approach? YAML configs or building it from scratch?
+### Advanced Features
 
-#OpenTelemetry #LLMOps #Observability #CostTracking #DevOps
+#### External CSV Files for Dynamic Pricing
 
----
+The Lookup processor supports loading external CSV files for larger datasets, allowing lookup data to be updated without restarting the collector via configurable reload intervals. Perfect if your pricing tables change frequently.
 
-## Post 2: Practical Guide
+#### Default Values and Match Flags
 
-Just solved a client's LLM cost tracking problem in 30 minutes.
+You can set default values when no match is found and optionally add a flag indicating whether the lookup succeeded:
 
-The setup:
-- LiteLLM for cost calculation ✓
-- OpenTelemetry Lookup Processor for validation ✓
-- One YAML file with model pricing ✓
-- Real-time span attributes tracking cost ✓
+```yaml
+processors:
+  lookup:
+    tables:
+      model_costs:
+        "gpt-4": cost_per_token: 0.00003
+    lookups:
+      - attribute: gen_ai.model
+        table: model_costs
+        default:
+          cost_per_token: "unknown"
+          lookup_available: false
+        add_match_flag: true
+        match_flag_attribute: lookup.matched
+```
 
-What used to take weeks of custom development is now a few config lines.
+### Alternative: The Transform Processor
 
-No, you don't need:
-- Custom database queries in your app code
-- A separate cost tracking microservice
-- Manual log parsing
-- Spreadsheet updates
+If the lookup is complex or context-dependent, you can use the transform processor with OTTL (OpenTelemetry Transform Language) to set attributes conditionally. However, for simple table lookups, the Lookup Processor is cleaner and more performant.
 
-You do need:
-- A way to capture token counts (LiteLLM does this automatically)
-- A way to enrich spans with pricing (YAML lookup table)
-- An observability backend that can query span attributes
+### Integration with Spring Boot
 
-LLM ops is getting simpler. Standard tools actually work now.
-
-If you're still building custom cost tracking from scratch, there's an easier way.
-
-#OpenTelemetry #LiteLLM #LLMOps #ObservabilityEngineering
-
----
-
-## Post 3: Conversational
-
-Real talk: how many of you are manually tracking LLM token costs?
-
-I see a lot of teams doing this:
-- Calling LLM → no idea how much it costs
-- Getting billed → shocked at the number
-- Investigating → three days of log parsing
-- Still not sure where the money went
-
-It doesn't have to be this way.
-
-Two tools + one YAML file = complete cost visibility:
-
-**LiteLLM** calculates cost after every API call. Automatically.
-
-**OpenTelemetry Lookup Processor** enriches your spans with per-model pricing from a simple table. Automatically.
-
-Now every span tells you exactly what it cost, where it went, and which model handled it.
-
-No infrastructure degree required. Just basic YAML.
-
-The hard part isn't the technology—it's knowing these tools exist and work together.
-
-If you're managing LLM workloads, you owe it to yourself to look at this for 30 minutes.
-
-What's stopping your team from tracking costs properly?
-
-#LLMOps #Observability #CostOptimization #DevOps
+For your Spring Boot setup, you'd deploy the Lookup Processor in the collector that receives OTLP from your Spring app. Since you're already instrumenting with OTel, this is a clean separation of concerns: your app sends raw data, and the collector enriches it with business context (like token costs).
 
 ---
 
-## Tips for LinkedIn Success
+## Part 2: LiteLLM Token Cost Computation
 
-### Which Post to Use?
+### When Token Cost is Enabled
 
-- **Thought Leadership**: Best if you want to position yourself as an expert. Works well if you have 5K+ followers.
-- **Practical Guide**: Most versatile. Works for any audience. Highest conversion to replies.
-- **Conversational**: Best for engagement and comments. The question at the end drives discussion.
+By default, LiteLLM returns token usage in all completion requests and exposes three public helper functions: `token_counter`, `cost_per_token`, and `completion_cost`. **Cost tracking is enabled by default** — you don't need to opt in.
 
-### Best Practices
+### How Token Cost is Computed
 
-1. **Post Time**: Tuesday-Thursday, 7-9am in your timezone (when professionals check LinkedIn)
-2. **Edit Before Posting**: LinkedIn doesn't have undo. Copy to a text editor first.
-3. **Add Visual**: Consider a screenshot of a YAML config or a simple diagram showing LiteLLM → OTel → Backend
-4. **Engage Early**: Reply to first comments within 1 hour to boost post ranking
-5. **Hashtags**: Keep to 3-5. The ones included are high-engagement for tech audiences
+The `completion_cost` function combines `token_counter` and `cost_per_token` to return the overall cost (in USD) for a given LLM API call, counting both input and output token costs.
 
-### Follow-Up Ideas
+#### The Process
 
-- If it gets traction, create a follow-up post with actual code examples
-- Link to your blog post or documentation in a comment (not the main text—LinkedIn limits link reach)
-- Create a thread: "Day 1: LLM cost tracking basics" → "Day 2: Advanced enrichment" → "Day 3: Cost anomaly detection"
+1. **Token Counting**
+   - LiteLLM uses model-specific tokenizers for Anthropic, Cohere, Llama2, and OpenAI
+   - Defaults to tiktoken if no model-specific tokenizer is available
 
-### Customization Suggestions
+2. **Pricing Lookup**
+   - LiteLLM maintains a centralized pricing database (`model_prices_and_context_window.json`)
+   - Contains input and output cost-per-token for hundreds of models across all supported providers
+   - Live list available at api.litellm.ai
 
-Feel free to adjust:
-- Add your company name or project if relevant
-- Change hashtags to match your network (e.g., #GoLang, #SpringBoot if those are your focus)
-- Add a personal anecdote (e.g., "Last month, a client wasted $8k before they realized...")
-- Link to a specific tool, blog post, or GitHub repo in a comment after posting
+3. **Cost Calculation**
+   - After each request completes, the cost is automatically calculated
+   - Attached to the response object in `response._hidden_params["response_cost"]`
+   - Logged for spend tracking
+
+### Example Code
+
+```python
+from litellm import completion
+
+response = completion(
+    model="gpt-3.5-turbo",
+    messages=[{"role": "user", "content": "Hey, how's it going?"}]
+)
+
+# Cost is automatically calculated and available here:
+cost = response._hidden_params["response_cost"]
+print(f"Cost: ${cost}")
+```
+
+### Custom Pricing
+
+You can override the default pricing for your own models by adding a `model_info` key to your model configuration with custom `input_cost_per_token` and `output_cost_per_token` values:
+
+```yaml
+model_list:
+  - model_name: "prod/claude-3-5-sonnet"
+    litellm_params:
+      model: "anthropic/claude-3-5-sonnet-20241022"
+    model_info:
+      input_cost_per_token: 0.000006
+      output_cost_per_token: 0.00003
+```
+
+### Advanced Features
+
+LiteLLM supports:
+- **Tiered pricing** for models with variable costs (e.g., Anthropic's > 200k token pricing, Bedrock service tiers)
+- **Cache-specific costs** for prompt caching
+
+### Helper Functions
+
+LiteLLM also exposes standalone helper functions:
+
+```python
+from litellm import token_counter, cost_per_token
+
+# Count tokens for a message
+messages = [{"role": "user", "content": "Hey, how's it going"}]
+token_count = token_counter(model="gpt-3.5-turbo", messages=messages)
+
+# Get cost per token
+prompt_tokens = 5
+completion_tokens = 10
+prompt_cost, completion_cost = cost_per_token(
+    model="gpt-3.5-turbo",
+    prompt_tokens=prompt_tokens,
+    completion_tokens=completion_tokens
+)
+print(f"Prompt cost: ${prompt_cost}, Completion cost: ${completion_cost}")
+```
 
 ---
 
-## The Three-Post Strategy (Optional)
+## Integration: LiteLLM + OpenTelemetry Lookup Processor
 
-If you want to create a mini-series:
+### Recommended Architecture
 
-### Week 1: Problem Awareness
-Use **Post 3 (Conversational)** to start the conversation about why cost tracking is hard.
+1. **LiteLLM calculates cost** in your application (either Python SDK or via the LiteLLM Proxy)
+2. **Add cost to span** as an attribute during instrumentation
+3. **OpenTelemetry Lookup Processor** validates or enriches the cost attribute based on your lookup table
+4. **Collector exports** enriched span to your observability backend
 
-### Week 2: Solution Introduction  
-Use **Post 1 (Thought Leadership)** to introduce the elegant solution.
+### Example: Python App with OTel
 
-### Week 3: Real-World Application
-Use **Post 2 (Practical Guide)** with a case study or before/after metrics.
+```python
+from litellm import completion
+from opentelemetry import trace
 
-This increases visibility with your network across multiple weeks and builds narrative momentum.
+tracer = trace.get_tracer(__name__)
+
+def call_llm(model: str, messages: list):
+    with tracer.start_as_current_span("llm_call") as span:
+        # Make the LLM call
+        response = completion(
+            model=model,
+            messages=messages
+        )
+        
+        # LiteLLM automatically calculated cost
+        cost = response._hidden_params["response_cost"]
+        usage = response.usage
+        
+        # Add to span attributes
+        span.set_attribute("gen_ai.model", model)
+        span.set_attribute("gen_ai.request.token.count", usage.prompt_tokens)
+        span.set_attribute("gen_ai.response.token.count", usage.completion_tokens)
+        span.set_attribute("litellm.cost.usd", cost)
+        
+        return response
+```
+
+The Lookup Processor then can:
+- Validate the cost matches your pricing table
+- Flag any pricing mismatches
+- Add additional cost breakdowns (e.g., cache cost, reasoning token cost)
 
 ---
 
-**Created**: March 27, 2026  
-**Topic**: LLM Token Cost Tracking with LiteLLM & OpenTelemetry  
-**Audience**: DevOps engineers, platform teams, LLM practitioners
+## Summary
+
+- **LiteLLM**: Automatically computes token costs after each API call; cost available in `response._hidden_params["response_cost"]`
+- **OpenTelemetry Lookup Processor**: Enriches spans with business context (like per-model pricing) based on lookup tables
+- **Together**: LiteLLM provides the raw cost, OTel Lookup Processor validates/enriches it for observability and compliance
