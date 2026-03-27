@@ -1,353 +1,8 @@
-Good question. You're looking for span enrichment/transformation capabilities in the OTEL ecosystem. Let me search for current options since this is an evolving area.Searched the webSearched the webPerfect—there's exactly what you're looking for. The Lookup Processor in the OpenTelemetry Collector enriches telemetry data by matching attribute values against external reference sources and adding corresponding metadata OneUptime.
-The Lookup Processor
-This is the purpose-built component for your use case. You can configure a lookup table to match on an attribute like service.name and automatically receive enriched attributes like team and oncall contact OneUptime.
-Your Use Case: LLM Model → Token Cost
-Here's how you'd configure it for your example:
-yamlprocessors:
-  lookup:
-    tables:
-      model_costs:
-        "gpt-4": cost_per_token: 0.00003
-        "gpt-3.5-turbo": cost_per_token: 0.0000015
-        "claude-3-opus": cost_per_token: 0.000015
-    lookups:
-      - attribute: gen_ai.model
-        table: model_costs
-        default:
-          cost_per_token: "unknown"
+# LinkedIn Post Variants: Simple Token Cost Solutions
 
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [lookup, batch]
-      exporters: [otlp]
-When a span comes through with gen_ai.model="gpt-4", the collector automatically adds cost_per_token: 0.00003 to the span attributes.
-Advanced Features
-The Lookup processor supports loading external CSV files for larger datasets, allowing lookup data to be updated without restarting the collector via configurable reload intervals OneUptime. Perfect if your pricing tables change frequently.
-You can also set default values when no match is found and optionally add a flag indicating whether the lookup succeeded OneUptime:
-yamlprocessors:
-  lookup:
-    tables:
-      model_costs:
-        "gpt-4": cost_per_token: 0.00003
-    lookups:
-      - attribute: gen_ai.model
-        table: model_costs
-        default:
-          cost_per_token: "unknown"
-          lookup_available: false
-        add_match_flag: true
-        match_flag_attribute: lookup.matched
-Alternative: The Transform Processor
-If the lookup is complex or context-dependent, you can use the transform processor with OTTL (OpenTelemetry Transform Language) to set attributes conditionally OpenTelemetry. But for simple table lookups, the Lookup Processor is cleaner and more performant.
+## Post 1: Thought Leadership
 
-For your Spring Boot setup, you'd deploy this in the collector that receives OTLP from your Spring app. Since you're instrumenting with OTel already, this is a clean separation of concerns: app sends raw data, collector enriches it with business context (like token costs).In LiteLLM how and when is the token cost enabled and computed?10:06 AMLet me search for the specifics on how LiteLLM handles token cost computation.Searched the webSearched the webGreat question. Let me break down how LiteLLM handles token cost computation:
-When Token Cost is Enabled
-By default, LiteLLM returns token usage in all completion requests and exposes three public helper functions: token_counter, cost_per_token, and completion_cost LiteLLM. So cost tracking is enabled by default — you don't need to opt in.
-How Token Cost is Computed
-The completion_cost function combines token_counter and cost_per_token to return the overall cost (in USD) for a given LLM API call, counting both input and output token costs LiteLLM.
-The process:
-
-Token Counting — LiteLLM uses model-specific tokenizers for Anthropic, Cohere, Llama2, and OpenAI, defaulting to tiktoken if no model-specific tokenizer is available LiteLLM
-Pricing Lookup — LiteLLM maintains a centralized pricing database (model_prices_and_context_window.json) that contains input and output cost-per-token for hundreds of models across all supported providers, with a live list available at api.litellm.ai LiteLLM
-Cost Calculation — After each request completes, the cost is automatically calculated and attached to the response object in response._hidden_params["response_cost"] and is logged for spend tracking DeepWiki
-
-Example Code
-pythonfrom litellm import completion
-
-response = completion(
-    model="gpt-3.5-turbo",
-    messages=[{"role": "user", "content": "Hey, how's it going?"}]
-)
-
-# Cost is automatically calculated and available here:
-cost = response._hidden_params["response_cost"]
-print(f"Cost: ${cost}")
-Custom Pricing
-You can override the default pricing for your own models: Add a model_info key to your model configuration with custom input_cost_per_token and output_cost_per_token values LiteLLM:
-yamlmodel_list:
-  - model_name: "prod/claude-3-5-sonnet"
-    litellm_params:
-      model: "anthropic/claude-3-5-sonnet-20241022"
-    model_info:
-      input_cost_per_token: 0.000006
-      output_cost_per_token: 0.00003
-Advanced Features
-LiteLLM supports tiered pricing for models with variable costs (like Anthropic's > 200k token pricing, Bedrock service tiers), and cache-specific costs for prompt caching LiteLLM.
-
-For your observability stack: The cost is automatically available in the LiteLLM response. If you're instrumenting with OTel (like you mentioned with TraceLoop), you can capture this cost as a span attribute before sending to your collector. Then the OTEL Lookup Processor can enrich/validate it if needed, or you can use the transform processor to normalize the attribute naming.put the last two responses into a a mark down10:08 AMMarkdown document combining OpenTelemetry Lookup Processor and LiteLLM token cost informationMarkdown document combining OpenTelemetry Lookup Processor and LiteLLM token cost informationDone. I've created a comprehensive markdown document that combines both responses into a single, well-structured guide covering:
-
-OpenTelemetry Lookup Processor — how to enrich spans with lookup table values (perfect for your LLM model → token cost use case)
-LiteLLM Token Cost Computation — when it's enabled, how it's calculated, and how to access the cost
-Integration Architecture — how to tie them together in a Python + OTel setup
-
-The document includes configuration examples, code samples, and practical recommendations for your Spring Boot/Python stack.Otel lookup processor and litellm costsDocument · MD DownloadPresented filePresented fileis there a more sophisticated version of the lookup processor?10:45 AMSearched the webSearched the webGreat question. Yes, there are more sophisticated approaches depending on your use case:
-1. Transform Processor with OTTL (Most Flexible)
-The transform processor is the most powerful and flexible data transformation component in the OpenTelemetry Collector, enabling advanced transformations like conditional logic, mathematical operations, string manipulation, nested attribute access, and cross-field computations OneUptime.
-Instead of simple table lookups, you can write conditional logic:
-yamlprocessors:
-  transform:
-    trace_statements:
-      # Conditional cost assignment based on model AND tier
-      - set(attributes["cost_per_token"], 0.00003) where attributes["gen_ai.model"] == "gpt-4" and attributes["customer.tier"] == "enterprise"
-      - set(attributes["cost_per_token"], 0.000045) where attributes["gen_ai.model"] == "gpt-4" and attributes["customer.tier"] == "standard"
-      - set(attributes["cost_per_token"], 0.0000015) where attributes["gen_ai.model"] == "gpt-3.5-turbo"
-      
-      # Calculate total cost: tokens * cost_per_token
-      - set(attributes["calculated_cost"], attributes["usage.completion_tokens"] * attributes["cost_per_token"]) 
-        where attributes["cost_per_token"] != nil
-
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [transform, batch]
-      exporters: [otlp]
-Key advantages:
-
-Use the where clause for conditional logic, combine conditions with logical operators (and, or, not), and handle nil values safely OneUptime
-Mathematical operations for derived values
-String manipulation and regex support
-Cross-field computations
-
-2. Lookup Processor with Conditional Logic
-The Lookup processor itself supports conditional configurations—you can apply lookups only when specific conditions are met, avoiding unnecessary enrichment or handling special cases OneUptime:
-yamlprocessors:
-  lookup:
-    tables:
-      premium_model_costs:
-        "gpt-4": cost_per_token: 0.00002
-        "gpt-4-turbo": cost_per_token: 0.00001
-      standard_model_costs:
-        "gpt-4": cost_per_token: 0.00003
-        "gpt-3.5-turbo": cost_per_token: 0.0000015
-    
-    lookups:
-      # Only lookup premium pricing for enterprise customers
-      - attribute: gen_ai.model
-        table: premium_model_costs
-        condition: attributes["customer.tier"] == "enterprise"
-      
-      # Fall back to standard pricing for everyone else
-      - attribute: gen_ai.model
-        table: standard_model_costs
-        condition: attributes["customer.tier"] != "enterprise"
-3. Chained Processors for Complex Workflows
-For your LLM cost tracking, a sophisticated pipeline might look like:
-yamlprocessors:
-  # First, enrich with customer tier and model info
-  attributes/enrich:
-    actions:
-      - key: lookup.applied
-        value: false
-        action: insert
-  
-  # Then, conditionally apply lookup based on model family
-  lookup/gpt_costs:
-    tables:
-      gpt_pricing:
-        "gpt-4": input_cost: 0.00003, output_cost: 0.00006
-        "gpt-3.5-turbo": input_cost: 0.0000015, output_cost: 0.000002
-    lookups:
-      - attribute: gen_ai.model
-        table: gpt_pricing
-        condition: attributes["gen_ai.model"] starts_with "gpt"
-  
-  lookup/claude_costs:
-    tables:
-      claude_pricing:
-        "claude-3-opus": input_cost: 0.000015, output_cost: 0.000075
-        "claude-3-sonnet": input_cost: 0.000003, output_cost: 0.000015
-    lookups:
-      - attribute: gen_ai.model
-        table: claude_pricing
-        condition: attributes["gen_ai.model"] starts_with "claude"
-  
-  # Finally, calculate total cost
-  transform/calculate_cost:
-    trace_statements:
-      - set(attributes["total_cost_usd"], 
-          (attributes["usage.prompt_tokens"] * attributes["input_cost"]) + 
-          (attributes["usage.completion_tokens"] * attributes["output_cost"]))
-        where attributes["input_cost"] != nil and attributes["output_cost"] != nil
-
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [attributes/enrich, lookup/gpt_costs, lookup/claude_costs, transform/calculate_cost, batch]
-      exporters: [otlp]
-Comparison
-FeatureLookupTransform + OTTLSimple table lookup✅✅Conditional logicBasicAdvanced (where, and, or, operators)Mathematical operations❌✅String manipulation❌✅ (regex, functions)Performance (large tables)ExcellentGoodReadabilitySimpleMore complexUse caseStatic lookupsDynamic transformations
-My Recommendation for Your Use Case
-For LLM cost tracking, I'd suggest a hybrid approach:
-
-Lookup Processor for base model pricing (gpt-4, claude-3, etc.)
-Transform Processor to:
-
-Apply tiered pricing based on context length
-Calculate total cost (prompt_tokens × input_cost + completion_tokens × output_cost)
-Flag anomalies (e.g., unexpected token counts)
-
-
-
-This keeps your pricing data maintainable (in lookup tables) while enabling sophisticated business logic.can they look up Table be in a relational database?10:47 AMSearched the webSearched the webGood question. The short answer is: not directly with the Lookup Processor as currently designed. The Lookup Processor currently supports YAML static tables and CSV files, but not live database queries.
-However, there are several approaches to achieve this:
-1. CSV Export + Lookup Processor (Simplest)
-The Lookup Processor supports external CSV files with configurable reload intervals, so you can export your pricing data from your database and refresh it periodically without restarting the collector OneUptime:
-yamlprocessors:
-  lookup:
-    csv_file:
-      path: /etc/otel-collector/model_pricing.csv
-      key_column: model_name
-      reload_interval: 1h  # Refresh every hour
-    lookups:
-      - attribute: gen_ai.model
-        source: csv_file
-Your model_pricing.csv:
-csvmodel_name,input_cost_per_token,output_cost_per_token,provider
-gpt-4,0.00003,0.00006,openai
-gpt-3.5-turbo,0.0000015,0.000002,openai
-claude-3-opus,0.000015,0.000075,anthropic
-Pros: Simple, low latency, no DB calls during span processing
-Cons: Not real-time, manual export process
-
-2. Transform Processor + Custom HTTP Enrichment (More Dynamic)
-Use the Transform Processor with OTTL to call an HTTP endpoint that queries your database:
-yamlprocessors:
-  transform:
-    trace_statements:
-      # Call your pricing microservice for real-time lookups
-      - set(attributes["model_pricing"], http_request("https://pricing-api.internal/cost", 
-          {"model": attributes["gen_ai.model"]})) 
-        where attributes["gen_ai.model"] != nil
-      - set(attributes["cost_per_token"], parse_json(attributes["model_pricing"]).cost)
-        where attributes["model_pricing"] != nil
-Pros: Real-time, dynamic, database-backed
-Cons: HTTP latency overhead, network dependency, requires custom API
-
-3. Lookup Processor with Database Sync Sidecar (Best Practice)
-Deploy a lightweight sidecar that continuously syncs your database to a local CSV/JSON:
-yaml# Sidecar container or service
-# Queries: SELECT model_name, input_cost_per_token, output_cost_per_token FROM pricing_models
-# Writes to: /etc/otel-collector/model_pricing.csv every 5 minutes
-
-processors:
-  lookup:
-    csv_file:
-      path: /etc/otel-collector/model_pricing.csv
-      key_column: model_name
-      reload_interval: 5m
-This is what you'd do in a containerized environment:
-dockerfile# sidecar container
-FROM python:3.11
-
-RUN pip install psycopg2-binary pandas
-
-COPY sync_pricing.py .
-
-CMD ["python", "sync_pricing.py"]
-python# sync_pricing.py
-import psycopg2
-import pandas as pd
-import time
-import os
-
-db_conn = psycopg2.connect(os.getenv("DATABASE_URL"))
-
-while True:
-    df = pd.read_sql("SELECT * FROM pricing_models", db_conn)
-    df.to_csv("/etc/otel-collector/model_pricing.csv", index=False)
-    time.sleep(300)  # Sync every 5 minutes
-Pros: Database-backed, real-time-ish, no overhead on spans, simple OTel config
-Cons: Requires sidecar process
-
-4. Build a Custom Lookup Processor (Future-Proof)
-This is what the OTel community may eventually support. You'd create a custom processor:
-go// Custom processor with SQL support
-type LookupProcessor struct {
-    db          *sql.DB
-    query       string
-    keyColumn   string
-    cacheExpiry time.Duration
-    cache       map[string]map[string]string
-}
-
-func (p *LookupProcessor) processSpan(span ptrace.Span) {
-    modelName := span.Attributes().Get("gen_ai.model")
-    
-    // Query DB with caching
-    costs := p.cachedQuery(modelName.AsString())
-    for k, v := range costs {
-        span.Attributes().PutStr(k, v)
-    }
-}
-
-5. Pure Python/Java Custom Instrumentation (Most Control)
-Since you're using Python + Java + Go, handle enrichment in your application code before sending to the collector:
-python# Python: LiteLLM + OTel span enrichment
-from litellm import completion
-from opentelemetry import trace
-import sqlalchemy as sa
-
-tracer = trace.get_tracer(__name__)
-db = sa.create_engine("postgresql://...")
-
-def call_llm_with_pricing(model: str, messages: list):
-    with tracer.start_as_current_span("llm_call") as span:
-        # Query DB for pricing
-        pricing = db.execute(
-            sa.text("SELECT * FROM pricing_models WHERE model_name = :model"),
-            {"model": model}
-        ).fetchone()
-        
-        # Make LLM call
-        response = completion(model=model, messages=messages)
-        
-        # Enrich span with cost
-        span.set_attribute("gen_ai.model", model)
-        span.set_attribute("cost_per_token", pricing.cost_per_token)
-        span.set_attribute("litellm.cost", response._hidden_params["response_cost"])
-        
-        return response
-java// Java Spring Boot: Use Spring AOP + @WithSpan
-@Configuration
-public class LLMObservabilityConfig {
-    
-    @Bean
-    public LLMInterceptor llmInterceptor(PricingRepository pricingRepository) {
-        return new LLMInterceptor(pricingRepository);
-    }
-}
-
-@Component
-class LLMInterceptor {
-    
-    @Around("@annotation(WithLLMPricing)")
-    public Object enrichWithPricing(ProceedingJoinPoint pjp) throws Throwable {
-        String model = (String) pjp.getArgs()[0];
-        Pricing pricing = pricingRepository.findByModel(model);
-        
-        Span span = GlobalTracer.get().activeSpan();
-        if (span != null) {
-            span.setTag("cost_per_token", pricing.getCostPerToken());
-        }
-        
-        return pjp.proceed();
-    }
-}
-Pros: Most control, no latency, database access at app layer
-Cons: Requires code changes, duplicated logic across services
-
-My Recommendation for Your Stack
-Given your Java + Python + Go environment:
-
-For Java Spring Boot: Custom @WithLLMPricing interceptor that queries your database and adds span attributes (approach #5)
-For Python LiteLLM: Similar decorator pattern before calling completion()
-For OTel Collector: CSV-based Lookup Processor with a simple sidecar that syncs your database every few minutes (approach #3)
-
-This gives you database-backed pricing, app-level enrichment, and OTel validation—without requiring the collector to do database I/O.write me a LinkedIn post for simple token cost solutions10:49 AMAThought LeadershipBPractical GuideCConversational🤔 Why are LLM token costs so hard to track?
+🤔 Why are LLM token costs so hard to track?
 
 Most teams use one of two approaches:
 1. Hope your LLM provider's dashboard is accurate (it's not)
@@ -369,18 +24,122 @@ Token cost tracking shouldn't require a PhD in infrastructure.
 
 What's your current approach? YAML configs or building it from scratch?
 
-#OpenTelemetry #LLMOps #Observability #CostTracking #DevOpsI've created three LinkedIn post variants for you:
+#OpenTelemetry #LLMOps #Observability #CostTracking #DevOps
 
-Thought Leadership — Positions you as someone solving real infrastructure problems with standard tools. Good for building credibility.
-Practical Guide — Case-study angle. "I solved this in 30 minutes" is relatable and actionable. Best for getting engagement from people actively dealing with the problem.
-Conversational — Direct, empathetic tone. Calls out the pain points most teams experience. Best for sparking discussion in comments.
+---
 
-Each emphasizes:
+## Post 2: Practical Guide
 
-The problem: Token cost tracking is painful and manual
-The solution: LiteLLM + OTel Lookup Processor (two tools, not twenty)
-The payoff: Real-time visibility, no code changes, minimal config
-The hook: "This shouldn't be complicated"
+Just solved a client's LLM cost tracking problem in 30 minutes.
 
-Pick whichever resonates with your voice. The conversational one tends to get the most comments because it asks a direct question at the end.
-Want me to adjust any of them—maybe add more technical depth, shorten for mobile, or change the tone?
+The setup:
+- LiteLLM for cost calculation ✓
+- OpenTelemetry Lookup Processor for validation ✓
+- One YAML file with model pricing ✓
+- Real-time span attributes tracking cost ✓
+
+What used to take weeks of custom development is now a few config lines.
+
+No, you don't need:
+- Custom database queries in your app code
+- A separate cost tracking microservice
+- Manual log parsing
+- Spreadsheet updates
+
+You do need:
+- A way to capture token counts (LiteLLM does this automatically)
+- A way to enrich spans with pricing (YAML lookup table)
+- An observability backend that can query span attributes
+
+LLM ops is getting simpler. Standard tools actually work now.
+
+If you're still building custom cost tracking from scratch, there's an easier way.
+
+#OpenTelemetry #LiteLLM #LLMOps #ObservabilityEngineering
+
+---
+
+## Post 3: Conversational
+
+Real talk: how many of you are manually tracking LLM token costs?
+
+I see a lot of teams doing this:
+- Calling LLM → no idea how much it costs
+- Getting billed → shocked at the number
+- Investigating → three days of log parsing
+- Still not sure where the money went
+
+It doesn't have to be this way.
+
+Two tools + one YAML file = complete cost visibility:
+
+**LiteLLM** calculates cost after every API call. Automatically.
+
+**OpenTelemetry Lookup Processor** enriches your spans with per-model pricing from a simple table. Automatically.
+
+Now every span tells you exactly what it cost, where it went, and which model handled it.
+
+No infrastructure degree required. Just basic YAML.
+
+The hard part isn't the technology—it's knowing these tools exist and work together.
+
+If you're managing LLM workloads, you owe it to yourself to look at this for 30 minutes.
+
+What's stopping your team from tracking costs properly?
+
+#LLMOps #Observability #CostOptimization #DevOps
+
+---
+
+## Tips for LinkedIn Success
+
+### Which Post to Use?
+
+- **Thought Leadership**: Best if you want to position yourself as an expert. Works well if you have 5K+ followers.
+- **Practical Guide**: Most versatile. Works for any audience. Highest conversion to replies.
+- **Conversational**: Best for engagement and comments. The question at the end drives discussion.
+
+### Best Practices
+
+1. **Post Time**: Tuesday-Thursday, 7-9am in your timezone (when professionals check LinkedIn)
+2. **Edit Before Posting**: LinkedIn doesn't have undo. Copy to a text editor first.
+3. **Add Visual**: Consider a screenshot of a YAML config or a simple diagram showing LiteLLM → OTel → Backend
+4. **Engage Early**: Reply to first comments within 1 hour to boost post ranking
+5. **Hashtags**: Keep to 3-5. The ones included are high-engagement for tech audiences
+
+### Follow-Up Ideas
+
+- If it gets traction, create a follow-up post with actual code examples
+- Link to your blog post or documentation in a comment (not the main text—LinkedIn limits link reach)
+- Create a thread: "Day 1: LLM cost tracking basics" → "Day 2: Advanced enrichment" → "Day 3: Cost anomaly detection"
+
+### Customization Suggestions
+
+Feel free to adjust:
+- Add your company name or project if relevant
+- Change hashtags to match your network (e.g., #GoLang, #SpringBoot if those are your focus)
+- Add a personal anecdote (e.g., "Last month, a client wasted $8k before they realized...")
+- Link to a specific tool, blog post, or GitHub repo in a comment after posting
+
+---
+
+## The Three-Post Strategy (Optional)
+
+If you want to create a mini-series:
+
+### Week 1: Problem Awareness
+Use **Post 3 (Conversational)** to start the conversation about why cost tracking is hard.
+
+### Week 2: Solution Introduction  
+Use **Post 1 (Thought Leadership)** to introduce the elegant solution.
+
+### Week 3: Real-World Application
+Use **Post 2 (Practical Guide)** with a case study or before/after metrics.
+
+This increases visibility with your network across multiple weeks and builds narrative momentum.
+
+---
+
+**Created**: March 27, 2026  
+**Topic**: LLM Token Cost Tracking with LiteLLM & OpenTelemetry  
+**Audience**: DevOps engineers, platform teams, LLM practitioners
