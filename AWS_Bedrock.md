@@ -2,9 +2,9 @@
 
 # AWS Bedrock Guardrails: Complete Session Transcript
 
-**Date:** March 31, 2026
-**Topic:** AWS Bedrock Guardrails Options, Python Integration, and Observability Metrics
-**User:** Hugh Brien (Lead Solutions Engineer at Dynatrace)
+- **Date:** March 31, 2026
+- **Topic:** AWS Bedrock Guardrails Options, Python Integration, and Observability Metrics
+- **User:** Hugh Brien (Lead Solutions Engineer at Dynatrace)
 
 -----
 
