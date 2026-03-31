@@ -1,3 +1,5 @@
+# Guardrails : {"sensitive": {"pii": [], "regex": []}, "topic": ["confidential Business information"], "content": [], "words": []}
+
 import json
 import boto3
 import os
